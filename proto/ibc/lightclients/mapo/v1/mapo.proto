@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package ibc.lightclients.mapo.v1;
+
+option go_package = "github.com/cosmos/ibc-go/v7/modules/light-clients/61-mapo;mapo";
+
+import "google/protobuf/timestamp.proto";
+import "gogoproto/gogo.proto";
+
+
+message ClientState {
+  option (gogoproto.goproto_getters) = false;
+
+  bool frozen = 1;
+  uint64  latestEpoch = 2;
+  uint64  epochSize = 3;
+  Identifier ClientIdentifier = 4;
+}
+
+message Identifier {}
