@@ -14,7 +14,28 @@ message ClientState {
   bool frozen = 1;
   uint64  latestEpoch = 2;
   uint64  epochSize = 3;
-  Identifier ClientIdentifier = 4;
+  string ClientIdentifier = 4;
 }
 
-message Identifier {}
+message ConsensusState {
+  option (gogoproto.goproto_getters) = false;
+
+  uint64 epoch = 1;
+  ValidatorSet validators = 2;
+  bytes commitmentRoot = 3;
+  google.protobuf.Timestamp timestamp = 4 [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+}
+
+message ValidatorSet {
+  option (gogoproto.goproto_getters) = false;
+
+  repeated PairKey pairKeys = 1;
+  repeated uint64 weights = 2;
+}
+
+message PairKey {
+  option (gogoproto.goproto_getters) = false;
+
+  string address = 1;
+  bytes G2PubKey = 2;
+}
