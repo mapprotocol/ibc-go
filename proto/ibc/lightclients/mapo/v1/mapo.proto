@@ -2,10 +2,10 @@ syntax = "proto3";
 
 package ibc.lightclients.mapo.v1;
 
-option go_package = "github.com/cosmos/ibc-go/v7/modules/light-clients/61-mapo;mapo";
+option go_package = "mapo";
 
 import "google/protobuf/timestamp.proto";
-import "gogoproto/gogo.proto";
+import "gogoproto/gogoproto/gogo.proto";
 
 
 message ClientState {
@@ -38,4 +38,37 @@ message PairKey {
 
   string address = 1;
   bytes G2PubKey = 2;
+}
+
+message Misbehaviour {
+  option (gogoproto.goproto_getters) = false;
+
+  Header header1  = 1;
+  Header header2  = 2;
+}
+
+message Header {
+  option (gogoproto.goproto_getters) = false;
+
+  SignedHeader signedHeader = 1 [(gogoproto.embed) = true];
+  bytes commitmentRoot = 2;
+  string identifier = 3;
+}
+
+message SignedHeader {
+  option (gogoproto.goproto_getters) = false;
+
+  bytes parentHash = 1;
+  bytes root = 2;
+  bytes txRoot = 3;
+  bytes receiptRoot = 4;
+  uint64 timestamp = 5;
+  uint64 gasLimit = 6;
+  uint64 gasUsed = 7;
+  uint64 nonce = 8;
+  bytes bloom = 9;
+  bytes extraData = 10;
+  bytes mixDigest = 11;
+  uint64 baseFee = 12;
+  uint64 number = 13;
 }
