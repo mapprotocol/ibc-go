@@ -3,8 +3,7 @@ package mapo
 import (
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	clienttypes "github.com/cosmos/ibc-go/v7/modules/core/02-client/types"
-	commitmenttypes "github.com/cosmos/ibc-go/v7/modules/core/23-commitment/types"
-	"github.com/cosmos/ibc-go/v7/modules/core/exported"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // ClientType returns MAPO
@@ -13,8 +12,8 @@ func (cs ConsensusState) ClientType() string {
 }
 
 // GetRoot returns the commitment Root for the specific
-func (cs ConsensusState) GetRoot() exported.Root {
-	return commitmenttypes.MerkleRoot{Hash: cs.CommitmentRoot}
+func (cs ConsensusState) GetRoot() common.Hash {
+	return common.BytesToHash(cs.CommitmentRoot)
 }
 
 // GetTimestamp returns block time in nanoseconds of the header that created consensus state

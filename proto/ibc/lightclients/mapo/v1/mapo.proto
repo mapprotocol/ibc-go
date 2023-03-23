@@ -14,7 +14,8 @@ message ClientState {
   bool frozen = 1;
   uint64  latestEpoch = 2;
   uint64  epochSize = 3;
-  string ClientIdentifier = 4;
+  uint64  latestHeight = 4;
+  string clientIdentifier = 5;
 }
 
 message ConsensusState {

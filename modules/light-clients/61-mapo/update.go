@@ -2,13 +2,14 @@ package mapo
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/mapprotocol/atlas/consensus/istanbul"
 	istanbulCore "github.com/mapprotocol/atlas/consensus/istanbul/core"
 	blscrypto "github.com/mapprotocol/atlas/helper/bls"
 
@@ -22,6 +23,7 @@ const (
 	IstanbulExtraVanity       = 32 // Fixed number of extra-data bytes reserved for validator vanity
 	IstanbulExtraBlsSignature = 64 // Fixed number of extra-data bytes reserved for validator seal on the current block
 	IstanbulExtraSeal         = 65 // Fixed number of extra-data bytes reserved for validator seal
+	PublicKeyBytes            = 128
 )
 
 // VerifyClientMessage checks if the clientMessage is of type Header or Misbehaviour and verifies the message
@@ -39,7 +41,6 @@ func (cs *ClientState) VerifyClientMessage(
 	}
 }
 
-// verifyHeader returns an error if:
 func (cs *ClientState) verifyHeader(
 	ctx sdk.Context, clientStore sdk.KVStore, cdc codec.BinaryCodec,
 	header *Header,
@@ -60,18 +61,25 @@ func (cs *ClientState) verifyHeader(
 	}
 	// todo replace
 	// Retrieve trusted consensus states for each Header in misbehaviour
-	//consState, found := GetConsensusState(clientStore, cdc, header.GetHeight())
-	//if !found {
-	//	return sdkerrors.Wrapf(clienttypes.ErrConsensusStateNotFound, "could not get consensus state from clientStore for Header at Number: %s", header.Number)
-	//}
-	var validators istanbul.ValidatorSet
+	consState, found := GetConsensusState(clientStore, cdc, header.GetHeight())
+	if !found {
+		return sdkerrors.Wrapf(clienttypes.ErrConsensusStateNotFound, "could not get consensus state from clientStore for Header at Number: %s", header.Number)
+	}
 
+	pks := consState.Validators.PairKeys
+	validators := make([]SerializedPublicKey, 0, len(pks))
+	for i, pk := range pks {
+		copy(validators[i][:], pk.G2PubKey)
+	}
+
+	vs := validatorSet{
+		validators: validators,
+	}
 	fork, cur := big.NewInt(BN256Fork), new(big.Int).SetUint64(header.Number)
-	return verifyAggregatedSeal(header.Hash(), validators, extra.AggregatedSeal, fork, cur)
+	return verifyAggregatedSeal(header.Hash(), vs, extra.AggregatedSeal, fork, cur)
 }
 
-func verifyAggregatedSeal(hash common.Hash, validators istanbul.ValidatorSet, aggregatedSeal IstanbulAggregatedSeal, fork, cur *big.Int) error {
-
+func verifyAggregatedSeal(hash common.Hash, validators validatorSet, aggregatedSeal IstanbulAggregatedSeal, fork, cur *big.Int) error {
 	if len(aggregatedSeal.Signature) != IstanbulExtraBlsSignature {
 		return ErrInvalidAggregatedSeal
 	}
@@ -81,8 +89,8 @@ func verifyAggregatedSeal(hash common.Hash, validators istanbul.ValidatorSet, ag
 	publicKeys := make([]blscrypto.SerializedPublicKey, 0)
 	for i := 0; i < validators.Size(); i++ {
 		if aggregatedSeal.Bitmap.Bit(i) == 1 {
-			pubKey := validators.GetByIndex(uint64(i)).BLSPublicKey()
-			publicKeys = append(publicKeys, pubKey)
+			pubKey := validators.BLSPublicKey(i)
+			publicKeys = append(publicKeys, blscrypto.SerializedPublicKey(pubKey))
 		}
 	}
 	// The length of a valid seal should be greater than the minimum quorum size
@@ -95,6 +103,27 @@ func verifyAggregatedSeal(hash common.Hash, validators istanbul.ValidatorSet, ag
 	}
 
 	return nil
+}
+
+type SerializedPublicKey [PublicKeyBytes]byte
+
+type validatorSet struct {
+	validators []SerializedPublicKey
+}
+
+func (vs *validatorSet) Size() int {
+	return len(vs.validators)
+}
+
+func (vs *validatorSet) BLSPublicKey(i int) SerializedPublicKey {
+	if i < vs.Size() {
+		return vs.validators[i]
+	}
+	return SerializedPublicKey{}
+}
+
+func (vs *validatorSet) MinQuorumSize() int {
+	return int(math.Ceil(float64(2*vs.Size()) / 3))
 }
 
 type IstanbulAggregatedSeal struct {

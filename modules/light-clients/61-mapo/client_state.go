@@ -1,9 +1,17 @@
 package mapo
 
 import (
+	"bytes"
+	"strings"
+
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/light"
+	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 
 	clienttypes "github.com/cosmos/ibc-go/v7/modules/core/02-client/types"
 	"github.com/cosmos/ibc-go/v7/modules/core/exported"
@@ -15,6 +23,13 @@ const (
 	MAPO string = "61-mapo"
 )
 
+type TxProof struct {
+	Receipt     *ethtypes.Receipt
+	Proof       light.NodeList
+	BlockNumber uint64
+	TxIndex     uint
+}
+
 // ClientType is mapo.
 func (cs ClientState) ClientType() string {
 	return MAPO
@@ -22,7 +37,7 @@ func (cs ClientState) ClientType() string {
 
 // GetLatestHeight returns latest block height.
 func (cs ClientState) GetLatestHeight() exported.Height {
-	return clienttypes.NewHeight(0, 0)
+	return clienttypes.NewHeight(revisionNumber, cs.LatestHeight)
 }
 
 // GetTimestampAtHeight returns the timestamp in nanoseconds of the consensus state at the given height.
@@ -32,7 +47,12 @@ func (cs ClientState) GetTimestampAtHeight(
 	cdc codec.BinaryCodec,
 	height exported.Height,
 ) (uint64, error) {
-	return 0, nil
+	// get consensus state at height from clientStore to check for expiry
+	consState, found := GetConsensusState(clientStore, cdc, height)
+	if !found {
+		return 0, sdkerrors.Wrapf(clienttypes.ErrConsensusStateNotFound, "height (%s)", height)
+	}
+	return consState.GetTimestamp(), nil
 }
 
 // Status returns the status of the mapo client.
@@ -57,8 +77,18 @@ func (cs ClientState) Status(
 
 // Validate performs a basic validation of the client state fields.
 func (cs ClientState) Validate() error {
-	// todo validate cs.ClientIdentifier
-
+	if strings.TrimSpace(cs.ClientIdentifier) == "" {
+		return sdkerrors.Wrap(ErrInvalidClientIdentifier, "client identifier cannot be empty string")
+	}
+	if cs.LatestEpoch == 0 {
+		return sdkerrors.Wrap(ErrInvalidLatestEpoch, "latest epoch must be greater than zero")
+	}
+	if cs.EpochSize == 0 {
+		return sdkerrors.Wrap(ErrInvalidEpochSize, "epoch size must be greater than zero")
+	}
+	if cs.LatestHeight == 0 {
+		return sdkerrors.Wrap(ErrInvalidLatestHeight, "latest height must be greater than zero")
+	}
 	return nil
 }
 
@@ -68,10 +98,10 @@ func (cs ClientState) ZeroCustomFields() exported.ClientState {
 	// copy over all chain-specified fields
 	// and leave custom fields empty
 	return &ClientState{
-		Frozen:           cs.Frozen,
-		EpochSize:        cs.EpochSize,
-		LatestEpoch:      cs.LatestEpoch,
-		ClientIdentifier: cs.ClientIdentifier,
+		Frozen:       cs.Frozen,
+		LatestEpoch:  cs.LatestEpoch,
+		EpochSize:    cs.EpochSize,
+		LatestHeight: cs.LatestHeight,
 	}
 }
 
@@ -104,7 +134,24 @@ func (cs ClientState) VerifyMembership(
 	path exported.Path,
 	value []byte,
 ) error {
-	panic("implement me")
+	if cs.GetLatestHeight().LT(height) {
+		return sdkerrors.Wrapf(
+			sdkerrors.ErrInvalidHeight,
+			"client state height < proof height (%d < %d), please ensure the client has been updated", cs.GetLatestHeight(), height,
+		)
+	}
+
+	consensusState, found := GetConsensusState(clientStore, cdc, height)
+	if !found {
+		return sdkerrors.Wrap(clienttypes.ErrConsensusStateNotFound, "please ensure the proof was constructed against a height that exists on the client")
+	}
+
+	txProve, err := decodeTxProve(proof)
+	if err != nil {
+		return err
+	}
+
+	return verifyProof(consensusState.GetRoot(), txProve)
 }
 
 // VerifyNonMembership is a generic proof verification method which verifies the absence of a given CommitmentPath at a specified height.
@@ -120,5 +167,38 @@ func (cs ClientState) VerifyNonMembership(
 	proof []byte,
 	path exported.Path,
 ) error {
-	panic("implement me")
+	if cs.GetLatestHeight().LT(height) {
+		return sdkerrors.Wrapf(
+			sdkerrors.ErrInvalidHeight,
+			"client state height < proof height (%d < %d), please ensure the client has been updated", cs.GetLatestHeight(), height,
+		)
+	}
+	return nil
+}
+
+func decodeTxProve(txProveBytes []byte) (*TxProof, error) {
+	var txProof TxProof
+	if err := rlp.DecodeBytes(txProveBytes, &txProof); err != nil {
+		return nil, err
+	}
+	return &txProof, nil
+}
+
+func verifyProof(receiptsRoot common.Hash, txProof *TxProof) error {
+	var buf bytes.Buffer
+	rs := ethtypes.Receipts{txProof.Receipt}
+	rs.EncodeIndex(0, &buf)
+	giveReceipt := buf.Bytes()
+
+	var key []byte
+	key = rlp.AppendUint64(key[:0], uint64(txProof.TxIndex))
+
+	getReceipt, err := trie.VerifyProof(receiptsRoot, key, txProof.Proof.NodeSet())
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(giveReceipt, getReceipt) {
+		return sdkerrors.Wrap(ErrInvalidReceipt, "receipt mismatch")
+	}
+	return nil
 }
